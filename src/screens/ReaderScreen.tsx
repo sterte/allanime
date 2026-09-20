@@ -1,11 +1,12 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, Pressable, Text, Animated, PanResponder } from 'react-native';
+import { View, StyleSheet, Pressable, Text, Animated, PanResponder, ScrollView, Alert } from 'react-native';
 import WebView, { WebViewMessageEvent } from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MANGAPLUS_INJECTED_SCRIPT } from '../webview/injectedScripts/mangaplus';
 import { SHONENJUMPPLUS_INJECTED_SCRIPT } from '../webview/injectedScripts/shonenjumpplus';
 import { PageUpdateMessage, NavigateCommand, Side } from '../webview/messages';
 import { reduceMirrorState, initialMirrorState, MirrorState } from '../sync/mirrorState';
+import { Bookmark, loadBookmarks, saveBookmarks } from '../storage/bookmarks';
 
 const DRAWER_WIDTH = 260;
 const EDGE_ZONE_WIDTH = 24;
@@ -51,10 +52,20 @@ export default function ReaderScreen() {
     })
   ).current;
 
+  const [jpSource, setJpSource] = useState({ uri: JP_HOME });
+  const [enSource, setEnSource] = useState({ uri: EN_HOME });
+  const pendingRestorePage = useRef<{ jp: number | null; en: number | null }>({ jp: null, en: null });
+
+  const jpCurrent = useRef({ url: JP_HOME, title: '' });
+  const enCurrent = useRef({ url: EN_HOME, title: '' });
+
+  const navigateTo = useCallback((side: Side, url: string) => {
+    if (side === 'jp') setJpSource({ uri: url });
+    else setEnSource({ uri: url });
+  }, []);
+
   const goToLogin = (side: 'jp' | 'en') => {
-    const ref = side === 'jp' ? jpWebViewRef : enWebViewRef;
-    const uri = side === 'jp' ? JP_HOME : EN_HOME;
-    ref.current?.injectJavaScript(`window.location.href = ${JSON.stringify(uri)}; true;`);
+    navigateTo(side, side === 'jp' ? JP_HOME : EN_HOME);
   };
 
   const [mirrorState, setMirrorState] = useState<MirrorState>(initialMirrorState);
@@ -74,6 +85,9 @@ export default function ReaderScreen() {
     }
     if (msg.type !== 'page-update') return;
 
+    const currentRef = side === 'jp' ? jpCurrent : enCurrent;
+    currentRef.current = { url: msg.url, title: msg.title };
+
     setMirrorState((prev) => {
       const { state, action } = reduceMirrorState(prev, {
         type: 'PAGE_CHANGED', side, page: msg.page, now: Date.now(),
@@ -83,6 +97,16 @@ export default function ReaderScreen() {
       }
       return state;
     });
+  }, [sendNavigate]);
+
+  const handleLoadEnd = useCallback((side: Side) => () => {
+    const page = pendingRestorePage.current[side];
+    if (page === null) return;
+    pendingRestorePage.current[side] = null;
+    // ponytail: fixed delay instead of confirming the injected script's
+    // message listener is actually registered yet — simplest thing that
+    // works; revisit if restores prove flaky on slower devices.
+    setTimeout(() => sendNavigate(side, page), 300);
   }, [sendNavigate]);
 
   useEffect(() => {
@@ -103,22 +127,76 @@ export default function ReaderScreen() {
     });
   }, [sendNavigate]);
 
+  const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
+
+  useEffect(() => {
+    loadBookmarks().then(setBookmarks);
+  }, []);
+
+  const addBookmark = useCallback(() => {
+    const bookmark: Bookmark = {
+      id: String(Date.now()),
+      createdAt: Date.now(),
+      jpUrl: jpCurrent.current.url,
+      jpTitle: jpCurrent.current.title,
+      jpPage: mirrorState.pageJP,
+      enUrl: enCurrent.current.url,
+      enTitle: enCurrent.current.title,
+      enPage: mirrorState.pageEN,
+      pageDelta: mirrorState.pageDelta,
+    };
+    setBookmarks((prev) => {
+      const next = [bookmark, ...prev];
+      saveBookmarks(next);
+      return next;
+    });
+  }, [mirrorState]);
+
+  const deleteBookmark = useCallback((id: string) => {
+    setBookmarks((prev) => {
+      const next = prev.filter((b) => b.id !== id);
+      saveBookmarks(next);
+      return next;
+    });
+  }, []);
+
+  const confirmDeleteBookmark = useCallback((bookmark: Bookmark) => {
+    Alert.alert(
+      'Eliminare il bookmark?',
+      bookmark.jpTitle || bookmark.enTitle || 'Bookmark',
+      [
+        { text: 'Annulla', style: 'cancel' },
+        { text: 'Elimina', style: 'destructive', onPress: () => deleteBookmark(bookmark.id) },
+      ],
+    );
+  }, [deleteBookmark]);
+
+  const restoreBookmark = useCallback((bookmark: Bookmark) => {
+    pendingRestorePage.current = { jp: bookmark.jpPage, en: bookmark.enPage };
+    setMirrorState({ ...initialMirrorState, pageDelta: bookmark.pageDelta });
+    navigateTo('jp', bookmark.jpUrl);
+    navigateTo('en', bookmark.enUrl);
+    setDrawer(false);
+  }, [navigateTo]);
+
   return (
     <View style={styles.root}>
       <View style={[styles.splitContainer, { flexDirection: splitDirection }]}>
         <WebView
           ref={jpWebViewRef}
           style={styles.pane}
-          source={{ uri: JP_HOME }}
+          source={jpSource}
           injectedJavaScript={SHONENJUMPPLUS_INJECTED_SCRIPT}
           onMessage={handleMessage('jp')}
+          onLoadEnd={handleLoadEnd('jp')}
         />
         <WebView
           ref={enWebViewRef}
           style={styles.pane}
-          source={{ uri: EN_HOME }}
+          source={enSource}
           injectedJavaScript={MANGAPLUS_INJECTED_SCRIPT}
           onMessage={handleMessage('en')}
+          onLoadEnd={handleLoadEnd('en')}
         />
       </View>
 
@@ -135,48 +213,75 @@ export default function ReaderScreen() {
       <Animated.View
         style={[
           styles.drawer,
-          { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 },
+          { paddingTop: insets.top, paddingBottom: insets.bottom },
           { transform: [{ translateX: drawerAnim }] },
         ]}
       >
-        <Text style={styles.drawerSectionTitle}>Opzioni</Text>
-        <View style={styles.drawerRow}>
-          <Text style={styles.drawerRowLabel}>Orientamento</Text>
-          <Pressable
-            style={styles.smallButton}
-            onPress={() => setSplitDirection((d) => (d === 'row' ? 'column' : 'row'))}
-          >
-            <Text style={styles.smallButtonText}>
-              {splitDirection === 'row' ? 'Orizzontale' : 'Verticale'}
-            </Text>
-          </Pressable>
-        </View>
-        <View style={styles.drawerRow}>
-          <Text style={styles.drawerRowLabel}>Scarto pagine (JP = EN {mirrorState.pageDelta >= 0 ? '+' : ''}{mirrorState.pageDelta})</Text>
-          <View style={styles.stepper}>
-            <Pressable style={styles.smallButton} onPress={() => changeDelta(-1)}>
-              <Text style={styles.smallButtonText}>-</Text>
-            </Pressable>
-            <Text style={styles.stepperValue}>{mirrorState.pageDelta}</Text>
-            <Pressable style={styles.smallButton} onPress={() => changeDelta(1)}>
-              <Text style={styles.smallButtonText}>+</Text>
+        <ScrollView contentContainerStyle={styles.drawerContent}>
+          <Text style={styles.drawerSectionTitle}>Opzioni</Text>
+          <View style={styles.drawerRow}>
+            <Text style={styles.drawerRowLabel}>Orientamento</Text>
+            <Pressable
+              style={styles.smallButton}
+              onPress={() => setSplitDirection((d) => (d === 'row' ? 'column' : 'row'))}
+            >
+              <Text style={styles.smallButtonText}>
+                {splitDirection === 'row' ? 'Orizzontale' : 'Verticale'}
+              </Text>
             </Pressable>
           </View>
-        </View>
+          <View style={styles.drawerRow}>
+            <Text style={styles.drawerRowLabel}>Scarto pagine (JP = EN {mirrorState.pageDelta >= 0 ? '+' : ''}{mirrorState.pageDelta})</Text>
+            <View style={styles.stepper}>
+              <Pressable style={styles.smallButton} onPress={() => changeDelta(-1)}>
+                <Text style={styles.smallButtonText}>-</Text>
+              </Pressable>
+              <Text style={styles.stepperValue}>{mirrorState.pageDelta}</Text>
+              <Pressable style={styles.smallButton} onPress={() => changeDelta(1)}>
+                <Text style={styles.smallButtonText}>+</Text>
+              </Pressable>
+            </View>
+          </View>
 
-        <Text style={styles.drawerSectionTitle}>Account</Text>
-        <View style={styles.drawerRow}>
-          <Text style={styles.drawerRowLabel}>Shonen Jump+ (JP)</Text>
-          <Pressable style={styles.smallButton} onPress={() => goToLogin('jp')}>
-            <Text style={styles.smallButtonText}>Vai al login</Text>
-          </Pressable>
-        </View>
-        <View style={styles.drawerRow}>
-          <Text style={styles.drawerRowLabel}>MangaPlus (EN)</Text>
-          <Pressable style={styles.smallButton} onPress={() => goToLogin('en')}>
-            <Text style={styles.smallButtonText}>Vai al login</Text>
-          </Pressable>
-        </View>
+          <Text style={styles.drawerSectionTitle}>Account</Text>
+          <View style={styles.drawerRow}>
+            <Text style={styles.drawerRowLabel}>Shonen Jump+ (JP)</Text>
+            <Pressable style={styles.smallButton} onPress={() => goToLogin('jp')}>
+              <Text style={styles.smallButtonText}>Vai al login</Text>
+            </Pressable>
+          </View>
+          <View style={styles.drawerRow}>
+            <Text style={styles.drawerRowLabel}>MangaPlus (EN)</Text>
+            <Pressable style={styles.smallButton} onPress={() => goToLogin('en')}>
+              <Text style={styles.smallButtonText}>Vai al login</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.bookmarkHeader}>
+            <Text style={styles.drawerSectionTitle}>Bookmark</Text>
+            <Pressable style={styles.smallButton} onPress={addBookmark}>
+              <Text style={styles.smallButtonText}>+ Aggiungi</Text>
+            </Pressable>
+          </View>
+          {bookmarks.length === 0 && (
+            <Text style={styles.bookmarkEmpty}>Nessun bookmark salvato</Text>
+          )}
+          {bookmarks.map((bookmark, index) => (
+            <Pressable
+              key={bookmark.id}
+              style={styles.bookmarkRow}
+              onPress={() => restoreBookmark(bookmark)}
+              onLongPress={() => confirmDeleteBookmark(bookmark)}
+            >
+              <Text style={styles.bookmarkTitle} numberOfLines={1}>
+                {index + 1}. {bookmark.jpTitle || bookmark.enTitle || 'Bookmark'}
+              </Text>
+              <Text style={styles.bookmarkSubtitle}>
+                JP: {bookmark.jpPage ?? '–'}  EN: {bookmark.enPage ?? '–'}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
       </Animated.View>
     </View>
   );
@@ -197,8 +302,11 @@ const styles = StyleSheet.create({
   drawer: {
     position: 'absolute', top: 0, bottom: 0, left: 0,
     width: DRAWER_WIDTH,
-    backgroundColor: '#1e1e1e', paddingHorizontal: 16,
+    backgroundColor: '#1e1e1e',
     zIndex: 2,
+  },
+  drawerContent: {
+    paddingHorizontal: 16, paddingTop: 16, paddingBottom: 24,
   },
   drawerSectionTitle: {
     color: '#888', fontSize: 12, textTransform: 'uppercase',
@@ -215,4 +323,14 @@ const styles = StyleSheet.create({
   smallButtonText: { color: 'white', fontSize: 12 },
   stepper: { flexDirection: 'row', alignItems: 'center' },
   stepperValue: { color: 'white', fontSize: 14, marginHorizontal: 10, minWidth: 20, textAlign: 'center' },
+  bookmarkHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginTop: 20,
+  },
+  bookmarkEmpty: { color: '#666', fontSize: 12, fontStyle: 'italic', marginTop: 4 },
+  bookmarkRow: {
+    backgroundColor: '#2a2a2a', borderRadius: 4, padding: 8, marginTop: 8,
+  },
+  bookmarkTitle: { color: 'white', fontSize: 13 },
+  bookmarkSubtitle: { color: '#999', fontSize: 11, marginTop: 2 },
 });

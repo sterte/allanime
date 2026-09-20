@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
     "@types/jest": "29.5.14",
     "expo": "~57.0.24",
     "expo-status-bar": "~57.0.1",
@@ -27,7 +28,10 @@
     "test": "jest"
   },
   "jest": {
-    "preset": "jest-expo"
+    "preset": "jest-expo",
+    "moduleNameMapper": {
+      "^@react-native-async-storage/async-storage$": "<rootDir>/node_modules/@react-native-async-storage/async-storage/jest/async-storage-mock"
+    }
   },
   "private": true
 }

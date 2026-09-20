@@ -5,6 +5,8 @@ export interface PageUpdateMessage {
   side: Side;
   page: number;
   totalPages: number;
+  url: string;
+  title: string;
 }
 
 export interface NavigateCommand {

@@ -51,7 +51,8 @@ export const SHONENJUMPPLUS_INJECTED_SCRIPT = `
     if (info && info.page !== lastPage) {
       lastPage = info.page;
       window.ReactNativeWebView.postMessage(JSON.stringify({
-        type: 'page-update', side: 'jp', page: info.page, totalPages: info.total
+        type: 'page-update', side: 'jp', page: info.page, totalPages: info.total,
+        url: window.location.href, title: document.title
       }));
     }
   }
