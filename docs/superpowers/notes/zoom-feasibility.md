@@ -1,0 +1,6 @@
+# Zoom sync feasibility — findings (2026-09-20 spike, Task 2)
+
+- Native pinch-zoom state readable via `onScroll` → `nativeEvent.zoomScale`: **NO** on Android — confirmed live (logged `undefined` on every scroll/pinch). Matches a known, unresolved `react-native-webview` bug on Android ([issue #2123](https://github.com/react-native-webview/react-native-webview/issues/2123)): `zoomScale` is only populated on iOS, never on Android.
+- CSS `transform: scale()` visually zooms WebView content when injected via `injectJavaScript`: **YES** — confirmed live on the Shonen Jump+ pane (Android device, Expo Go).
+- **Decision: NO-GO** for the originally scoped feature (mirroring the user's actual pinch gesture from one WebView to the other). We cannot detect that a native pinch happened on Android, let alone its scale or focal point — there is nothing to mirror.
+- **Follow-up idea, out of scope for this plan**: the CSS-transform mechanism itself works, which means an *app-driven* zoom (not tied to native pinch — e.g. explicit "+"/"−" buttons or a slider in our own UI that sets `document.body.style.transform` on both WebViews to the same scale) is technically viable. This is a different feature from "mirror the pinch you just did" and would need its own design pass if wanted later.
