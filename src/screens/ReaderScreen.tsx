@@ -1,8 +1,10 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { View, StyleSheet, Pressable, Text, Animated, PanResponder } from 'react-native';
-import WebView from 'react-native-webview';
+import WebView, { WebViewMessageEvent } from 'react-native-webview';
 import { MANGAPLUS_INJECTED_SCRIPT } from '../webview/injectedScripts/mangaplus';
 import { SHONENJUMPPLUS_INJECTED_SCRIPT } from '../webview/injectedScripts/shonenjumpplus';
+import { PageUpdateMessage, NavigateCommand, Side } from '../webview/messages';
+import { reduceMirrorState, initialMirrorState, MirrorState } from '../sync/mirrorState';
 
 const DRAWER_WIDTH = 260;
 const EDGE_ZONE_WIDTH = 24;
@@ -53,6 +55,46 @@ export default function ReaderScreen() {
     ref.current?.injectJavaScript(`window.location.href = ${JSON.stringify(uri)}; true;`);
   };
 
+  const [mirrorState, setMirrorState] = useState<MirrorState>(initialMirrorState);
+
+  const sendNavigate = useCallback((side: Side, direction: 'next' | 'prev') => {
+    const ref = side === 'jp' ? jpWebViewRef : enWebViewRef;
+    const command: NavigateCommand = { type: 'navigate', direction };
+    ref.current?.postMessage(JSON.stringify(command));
+  }, []);
+
+  const handleMessage = useCallback((side: Side) => (event: WebViewMessageEvent) => {
+    let msg: PageUpdateMessage;
+    try {
+      msg = JSON.parse(event.nativeEvent.data);
+    } catch {
+      return;
+    }
+    if (msg.type !== 'page-update') return;
+
+    setMirrorState((prev) => {
+      const { state, action } = reduceMirrorState(prev, {
+        type: 'PAGE_CHANGED', side, page: msg.page, now: Date.now(),
+      });
+      if (action.sendNavigateTo && action.direction) {
+        sendNavigate(action.sendNavigateTo, action.direction);
+      }
+      return state;
+    });
+  }, [sendNavigate]);
+
+  useEffect(() => {
+    if (!mirrorState.pendingMirror) return;
+    const interval = setInterval(() => {
+      setMirrorState((prev) => reduceMirrorState(prev, { type: 'TIMEOUT_CHECK', now: Date.now() }).state);
+    }, 500);
+    return () => clearInterval(interval);
+  }, [mirrorState.pendingMirror]);
+
+  const handleRealign = useCallback(() => {
+    setMirrorState((prev) => reduceMirrorState(prev, { type: 'MANUAL_REALIGN' }).state);
+  }, []);
+
   return (
     <View style={styles.root}>
       <View style={[styles.splitContainer, { flexDirection: splitDirection }]}>
@@ -61,12 +103,14 @@ export default function ReaderScreen() {
           style={styles.pane}
           source={{ uri: JP_HOME }}
           injectedJavaScript={SHONENJUMPPLUS_INJECTED_SCRIPT}
+          onMessage={handleMessage('jp')}
         />
         <WebView
           ref={enWebViewRef}
           style={styles.pane}
           source={{ uri: EN_HOME }}
           injectedJavaScript={MANGAPLUS_INJECTED_SCRIPT}
+          onMessage={handleMessage('en')}
         />
       </View>
 
