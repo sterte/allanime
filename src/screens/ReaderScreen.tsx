@@ -12,7 +12,7 @@ const EN_HOME = 'https://mangaplus.shueisha.co.jp/';
 export default function ReaderScreen() {
   const jpWebViewRef = useRef<WebView>(null);
   const enWebViewRef = useRef<WebView>(null);
-  const [splitDirection, setSplitDirection] = useState<'row' | 'column'>('row');
+  const [splitDirection, setSplitDirection] = useState<'row' | 'column'>('column');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerAnim = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
   const dragStartValue = useRef(-DRAWER_WIDTH);
