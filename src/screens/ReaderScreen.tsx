@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { View, StyleSheet, Pressable, Text, Animated, PanResponder } from 'react-native';
 import WebView from 'react-native-webview';
 import { MANGAPLUS_INJECTED_SCRIPT } from '../webview/injectedScripts/mangaplus';
+import { SHONENJUMPPLUS_INJECTED_SCRIPT } from '../webview/injectedScripts/shonenjumpplus';
 
 const DRAWER_WIDTH = 260;
 const EDGE_ZONE_WIDTH = 24;
@@ -59,6 +60,7 @@ export default function ReaderScreen() {
           ref={jpWebViewRef}
           style={styles.pane}
           source={{ uri: JP_HOME }}
+          injectedJavaScript={SHONENJUMPPLUS_INJECTED_SCRIPT}
         />
         <WebView
           ref={enWebViewRef}
@@ -120,11 +122,6 @@ const styles = StyleSheet.create({
     position: 'absolute', top: 0, bottom: 0, left: 0,
     width: EDGE_ZONE_WIDTH, zIndex: 3,
   },
-  testNavButton: {
-    position: 'absolute', top: 60, right: 20, zIndex: 3,
-    backgroundColor: '#c00', padding: 10, borderRadius: 6,
-  },
-  testButtonText: { color: 'white' },
   backdrop: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 1,
