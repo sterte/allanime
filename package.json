@@ -1,6 +1,6 @@
 {
-  "name": "feature-manga-dual-reader",
-  "version": "1.0.0",
+  "name": "allanime",
+  "version": "0.1.0",
   "main": "index.ts",
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -31,7 +31,8 @@
     "preset": "jest-expo",
     "moduleNameMapper": {
       "^@react-native-async-storage/async-storage$": "<rootDir>/node_modules/@react-native-async-storage/async-storage/jest/async-storage-mock"
-    }
+    },
+    "modulePathIgnorePatterns": ["<rootDir>/.worktrees/"]
   },
   "private": true
 }
