@@ -9,5 +9,5 @@ export interface PageUpdateMessage {
 
 export interface NavigateCommand {
   type: 'navigate';
-  direction: 'next' | 'prev';
+  targetPage: number;
 }

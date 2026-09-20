@@ -80,34 +80,47 @@ export const SHONENJUMPPLUS_INJECTED_SCRIPT = `
     try { cmd = JSON.parse(event.data); } catch (e) { return; }
     if (!cmd || cmd.type !== 'navigate') return;
 
-    var before = getPageInfo();
-    if (!before) return;
+    var start = getPageInfo();
+    if (!start) return;
+    var target = Math.max(1, Math.min(start.total, cmd.targetPage));
+    var goingForward = target > start.page;
+    var stepsLeft = Math.abs(target - start.page);
+    if (stepsLeft === 0) return;
 
-    // 'next' always means forward through the story, regardless of which
-    // arrow key that is — the key depends on the title's reading direction.
-    var forwardKey = before.isRtl ? 'ArrowLeft' : 'ArrowRight';
-    var backwardKey = before.isRtl ? 'ArrowRight' : 'ArrowLeft';
-    dispatchArrow(cmd.direction === 'next' ? forwardKey : backwardKey);
+    var forwardKey = start.isRtl ? 'ArrowLeft' : 'ArrowRight';
+    var backwardKey = start.isRtl ? 'ArrowRight' : 'ArrowLeft';
+    var key = goingForward ? forwardKey : backwardKey;
 
-    // ponytail: synthetic KeyboardEvents may be ignored if the site checks
-    // event.isTrusted. Ceiling: these fallbacks (slider, then raw layout
-    // offset) are brittle to markup changes. Upgrade path: find and call the
-    // site's real navigation handler once identified.
-    setTimeout(function () {
-      var after = getPageInfo();
-      if (after && after.page === before.page) {
-        var delta = cmd.direction === 'next' ? 1 : -1;
-        var slider = document.querySelector('.js-slider');
-        if (slider && before.via === 'slider') {
-          var target = Math.max(1, Math.min(before.total, before.page + delta));
-          setSliderValue(slider, target);
-        } else if (before.via === 'layout') {
-          var content = document.querySelector('.js-viewer-content');
-          var offset = delta * before.stepWidth * before.stepsPerNav;
-          content.style.right = (parseFloat(content.style.right || '0') + offset) + 'px';
+    // Steps one page at a time toward the absolute target, since the
+    // confirmed-reliable mechanism (a single simulated key press) only ever
+    // moves one page. A large delta just takes proportionally longer.
+    function stepOnce() {
+      if (stepsLeft <= 0) return;
+      var beforeStep = getPageInfo();
+      dispatchArrow(key);
+      stepsLeft -= 1;
+      setTimeout(function () {
+        var afterStep = getPageInfo();
+        // ponytail: synthetic KeyboardEvents may be ignored if the site
+        // checks event.isTrusted. Ceiling: these per-step fallbacks (slider,
+        // then raw layout offset) are brittle to markup changes. Upgrade
+        // path: find and call the site's real navigation handler once
+        // identified.
+        if (beforeStep && afterStep && afterStep.page === beforeStep.page) {
+          var delta = goingForward ? 1 : -1;
+          if (beforeStep.via === 'slider') {
+            var slider = document.querySelector('.js-slider');
+            if (slider) setSliderValue(slider, beforeStep.page + delta);
+          } else if (beforeStep.via === 'layout') {
+            var content = document.querySelector('.js-viewer-content');
+            var offset = delta * beforeStep.stepWidth * beforeStep.stepsPerNav;
+            content.style.right = (parseFloat(content.style.right || '0') + offset) + 'px';
+          }
         }
-      }
-    }, 200);
+        stepOnce();
+      }, 200);
+    }
+    stepOnce();
   }
 })();
 true;

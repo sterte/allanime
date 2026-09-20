@@ -5,28 +5,28 @@ export const MIRROR_TIMEOUT_MS = 3000;
 export interface MirrorState {
   pageJP: number | null;
   pageEN: number | null;
+  /** JP's target page is always EN's page + pageDelta (negative allowed). */
+  pageDelta: number;
   pendingMirror: Side | null;
   mirrorDeadline: number | null;
-  fallbackActive: boolean;
 }
 
 export const initialMirrorState: MirrorState = {
   pageJP: null,
   pageEN: null,
+  pageDelta: 0,
   pendingMirror: null,
   mirrorDeadline: null,
-  fallbackActive: false,
 };
 
 export type MirrorEvent =
   | { type: 'PAGE_CHANGED'; side: Side; page: number; now: number }
   | { type: 'TIMEOUT_CHECK'; now: number }
-  | { type: 'MANUAL_REALIGN' };
+  | { type: 'SET_DELTA'; delta: number };
 
 export interface MirrorAction {
   sendNavigateTo?: Side;
-  direction?: 'next' | 'prev';
-  showFallback: boolean;
+  targetPage?: number;
 }
 
 function otherSide(side: Side): Side {
@@ -37,25 +37,31 @@ export function reduceMirrorState(
   state: MirrorState,
   event: MirrorEvent,
 ): { state: MirrorState; action: MirrorAction } {
-  if (event.type === 'MANUAL_REALIGN') {
-    return {
-      state: { ...state, pendingMirror: null, mirrorDeadline: null, fallbackActive: false },
-      action: { showFallback: false },
-    };
+  if (event.type === 'SET_DELTA') {
+    const nextState: MirrorState = { ...state, pageDelta: event.delta };
+    // JP is treated as the anchor when the delta itself changes — resync EN
+    // to it rather than guessing which side the user meant to move.
+    if (nextState.pageJP !== null) {
+      const target = nextState.pageJP - event.delta;
+      return {
+        state: { ...nextState, pendingMirror: 'en', mirrorDeadline: null },
+        action: { sendNavigateTo: 'en', targetPage: target },
+      };
+    }
+    return { state: nextState, action: {} };
   }
 
   if (event.type === 'TIMEOUT_CHECK') {
     if (state.pendingMirror && state.mirrorDeadline !== null && event.now >= state.mirrorDeadline) {
       return {
-        state: { ...state, fallbackActive: true },
-        action: { showFallback: true },
+        state: { ...state, pendingMirror: null, mirrorDeadline: null },
+        action: {},
       };
     }
-    return { state, action: { showFallback: state.fallbackActive } };
+    return { state, action: {} };
   }
 
   // PAGE_CHANGED
-  const priorPage = event.side === 'jp' ? state.pageJP : state.pageEN;
   const nextState: MirrorState = {
     ...state,
     pageJP: event.side === 'jp' ? event.page : state.pageJP,
@@ -63,29 +69,25 @@ export function reduceMirrorState(
   };
 
   // If this is the side we're waiting on to confirm a mirror we requested,
-  // treat it as that confirmation rather than a new user-driven move —
-  // otherwise the two sides would keep re-triggering each other forever.
-  const isAwaitedMirrorConfirmation = state.pendingMirror === event.side;
-  if (isAwaitedMirrorConfirmation) {
+  // absorb it rather than treating it as a new move — otherwise the two
+  // sides would keep re-triggering each other forever.
+  if (state.pendingMirror === event.side) {
     return {
-      state: { ...nextState, pendingMirror: null, mirrorDeadline: null, fallbackActive: false },
-      action: { showFallback: false },
+      state: { ...nextState, pendingMirror: null, mirrorDeadline: null },
+      action: {},
     };
   }
 
-  if (priorPage === null) {
-    // Initial page report for this side — nothing to mirror yet.
-    return { state: nextState, action: { showFallback: state.fallbackActive } };
-  }
-
-  const direction: 'next' | 'prev' = event.page > priorPage ? 'next' : 'prev';
-  const target = otherSide(event.side);
+  const target = event.side === 'en'
+    ? event.page + nextState.pageDelta
+    : event.page - nextState.pageDelta;
+  const targetSide = otherSide(event.side);
   return {
     state: {
       ...nextState,
-      pendingMirror: target,
+      pendingMirror: targetSide,
       mirrorDeadline: event.now + MIRROR_TIMEOUT_MS,
     },
-    action: { sendNavigateTo: target, direction, showFallback: false },
+    action: { sendNavigateTo: targetSide, targetPage: target },
   };
 }

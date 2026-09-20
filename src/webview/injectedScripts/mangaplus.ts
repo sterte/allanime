@@ -34,11 +34,10 @@ export const MANGAPLUS_INJECTED_SCRIPT = `
 
     var surface = document.querySelector('.zao-surface');
     var images = document.querySelectorAll('.zao-image');
-    var current = parsePageInfo();
-    if (!surface || !images.length || !current) return;
+    if (!surface || !images.length) return;
 
-    var targetIndex = cmd.direction === 'next' ? current.page : current.page - 2;
-    var targetImg = images[Math.max(0, targetIndex)];
+    var targetIndex = Math.max(0, Math.min(images.length - 1, cmd.targetPage - 1));
+    var targetImg = images[targetIndex];
     if (targetImg) surface.scrollTop = targetImg.offsetTop;
   }
 })();

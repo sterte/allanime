@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { View, StyleSheet, Pressable, Text, Animated, PanResponder } from 'react-native';
 import WebView, { WebViewMessageEvent } from 'react-native-webview';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MANGAPLUS_INJECTED_SCRIPT } from '../webview/injectedScripts/mangaplus';
 import { SHONENJUMPPLUS_INJECTED_SCRIPT } from '../webview/injectedScripts/shonenjumpplus';
 import { PageUpdateMessage, NavigateCommand, Side } from '../webview/messages';
@@ -13,6 +14,7 @@ const JP_HOME = 'https://shonenjumpplus.com/';
 const EN_HOME = 'https://mangaplus.shueisha.co.jp/';
 
 export default function ReaderScreen() {
+  const insets = useSafeAreaInsets();
   const jpWebViewRef = useRef<WebView>(null);
   const enWebViewRef = useRef<WebView>(null);
   const [splitDirection, setSplitDirection] = useState<'row' | 'column'>('column');
@@ -57,9 +59,9 @@ export default function ReaderScreen() {
 
   const [mirrorState, setMirrorState] = useState<MirrorState>(initialMirrorState);
 
-  const sendNavigate = useCallback((side: Side, direction: 'next' | 'prev') => {
+  const sendNavigate = useCallback((side: Side, targetPage: number) => {
     const ref = side === 'jp' ? jpWebViewRef : enWebViewRef;
-    const command: NavigateCommand = { type: 'navigate', direction };
+    const command: NavigateCommand = { type: 'navigate', targetPage };
     ref.current?.postMessage(JSON.stringify(command));
   }, []);
 
@@ -76,8 +78,8 @@ export default function ReaderScreen() {
       const { state, action } = reduceMirrorState(prev, {
         type: 'PAGE_CHANGED', side, page: msg.page, now: Date.now(),
       });
-      if (action.sendNavigateTo && action.direction) {
-        sendNavigate(action.sendNavigateTo, action.direction);
+      if (action.sendNavigateTo && action.targetPage !== undefined) {
+        sendNavigate(action.sendNavigateTo, action.targetPage);
       }
       return state;
     });
@@ -91,9 +93,15 @@ export default function ReaderScreen() {
     return () => clearInterval(interval);
   }, [mirrorState.pendingMirror]);
 
-  const handleRealign = useCallback(() => {
-    setMirrorState((prev) => reduceMirrorState(prev, { type: 'MANUAL_REALIGN' }).state);
-  }, []);
+  const changeDelta = useCallback((step: number) => {
+    setMirrorState((prev) => {
+      const { state, action } = reduceMirrorState(prev, { type: 'SET_DELTA', delta: prev.pageDelta + step });
+      if (action.sendNavigateTo && action.targetPage !== undefined) {
+        sendNavigate(action.sendNavigateTo, action.targetPage);
+      }
+      return state;
+    });
+  }, [sendNavigate]);
 
   return (
     <View style={styles.root}>
@@ -115,7 +123,10 @@ export default function ReaderScreen() {
       </View>
 
       {/* Invisible edge strip — swipe right from here to open the drawer */}
-      <View style={styles.edgeZone} {...edgePanResponder.panHandlers} />
+      <View
+        style={[styles.edgeZone, { top: insets.top, bottom: insets.bottom }]}
+        {...edgePanResponder.panHandlers}
+      />
 
       {drawerOpen && (
         <Pressable style={styles.backdrop} onPress={() => setDrawer(false)} />
@@ -124,6 +135,7 @@ export default function ReaderScreen() {
       <Animated.View
         style={[
           styles.drawer,
+          { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 },
           { transform: [{ translateX: drawerAnim }] },
         ]}
       >
@@ -138,6 +150,18 @@ export default function ReaderScreen() {
               {splitDirection === 'row' ? 'Orizzontale' : 'Verticale'}
             </Text>
           </Pressable>
+        </View>
+        <View style={styles.drawerRow}>
+          <Text style={styles.drawerRowLabel}>Scarto pagine (JP = EN {mirrorState.pageDelta >= 0 ? '+' : ''}{mirrorState.pageDelta})</Text>
+          <View style={styles.stepper}>
+            <Pressable style={styles.smallButton} onPress={() => changeDelta(-1)}>
+              <Text style={styles.smallButtonText}>-</Text>
+            </Pressable>
+            <Text style={styles.stepperValue}>{mirrorState.pageDelta}</Text>
+            <Pressable style={styles.smallButton} onPress={() => changeDelta(1)}>
+              <Text style={styles.smallButtonText}>+</Text>
+            </Pressable>
+          </View>
         </View>
 
         <Text style={styles.drawerSectionTitle}>Account</Text>
@@ -163,7 +187,7 @@ const styles = StyleSheet.create({
   splitContainer: { flex: 1 },
   pane: { flex: 1 },
   edgeZone: {
-    position: 'absolute', top: 0, bottom: 0, left: 0,
+    position: 'absolute', left: 0,
     width: EDGE_ZONE_WIDTH, zIndex: 3,
   },
   backdrop: {
@@ -173,7 +197,7 @@ const styles = StyleSheet.create({
   drawer: {
     position: 'absolute', top: 0, bottom: 0, left: 0,
     width: DRAWER_WIDTH,
-    backgroundColor: '#1e1e1e', paddingTop: 60, paddingHorizontal: 16,
+    backgroundColor: '#1e1e1e', paddingHorizontal: 16,
     zIndex: 2,
   },
   drawerSectionTitle: {
@@ -189,4 +213,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#444', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 4,
   },
   smallButtonText: { color: 'white', fontSize: 12 },
+  stepper: { flexDirection: 'row', alignItems: 'center' },
+  stepperValue: { color: 'white', fontSize: 14, marginHorizontal: 10, minWidth: 20, textAlign: 'center' },
 });
