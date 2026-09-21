@@ -3,10 +3,8 @@ import { View, StyleSheet, Pressable, Text, Animated, PanResponder, ScrollView, 
 import WebView, { WebViewMessageEvent } from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MANGAPLUS_INJECTED_SCRIPT } from '../webview/injectedScripts/mangaplus';
-import {
-  SHONENJUMPPLUS_INJECTED_SCRIPT,
-  ANDROID_CUSTOM_ZOOM_SETUP_SCRIPT,
-} from '../webview/injectedScripts/shonenjumpplus';
+import { SHONENJUMPPLUS_INJECTED_SCRIPT } from '../webview/injectedScripts/shonenjumpplus';
+import { ANDROID_CUSTOM_ZOOM_SETUP_SCRIPT } from '../webview/injectedScripts/androidPinchZoom';
 import { PageUpdateMessage, NavigateCommand, Side } from '../webview/messages';
 import { reduceMirrorState, initialMirrorState, MirrorState } from '../sync/mirrorState';
 import { Bookmark, loadBookmarks, saveBookmarks } from '../storage/bookmarks';
@@ -14,6 +12,9 @@ import { Bookmark, loadBookmarks, saveBookmarks } from '../storage/bookmarks';
 const JP_INJECTED_SCRIPT = Platform.OS === 'android'
   ? SHONENJUMPPLUS_INJECTED_SCRIPT + ANDROID_CUSTOM_ZOOM_SETUP_SCRIPT
   : SHONENJUMPPLUS_INJECTED_SCRIPT;
+const EN_INJECTED_SCRIPT = Platform.OS === 'android'
+  ? MANGAPLUS_INJECTED_SCRIPT + ANDROID_CUSTOM_ZOOM_SETUP_SCRIPT
+  : MANGAPLUS_INJECTED_SCRIPT;
 
 const DRAWER_WIDTH = 260;
 const EDGE_ZONE_WIDTH = 24;
@@ -206,7 +207,7 @@ export default function ReaderScreen() {
           ref={enWebViewRef}
           style={styles.pane}
           source={enSource}
-          injectedJavaScript={MANGAPLUS_INJECTED_SCRIPT}
+          injectedJavaScript={EN_INJECTED_SCRIPT}
           onMessage={handleMessage('en')}
           onLoadEnd={handleLoadEnd('en')}
         />
