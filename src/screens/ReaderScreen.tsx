@@ -4,16 +4,16 @@ import WebView, { WebViewMessageEvent } from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MANGAPLUS_INJECTED_SCRIPT } from '../webview/injectedScripts/mangaplus';
 import { SHONENJUMPPLUS_INJECTED_SCRIPT } from '../webview/injectedScripts/shonenjumpplus';
-import { ANDROID_CUSTOM_ZOOM_SETUP_SCRIPT } from '../webview/injectedScripts/androidPinchZoom';
+import { androidTransformZoomScript, androidImageWidthZoomScript } from '../webview/injectedScripts/androidPinchZoom';
 import { PageUpdateMessage, NavigateCommand, Side } from '../webview/messages';
 import { reduceMirrorState, initialMirrorState, MirrorState } from '../sync/mirrorState';
 import { Bookmark, loadBookmarks, saveBookmarks } from '../storage/bookmarks';
 
 const JP_INJECTED_SCRIPT = Platform.OS === 'android'
-  ? SHONENJUMPPLUS_INJECTED_SCRIPT + ANDROID_CUSTOM_ZOOM_SETUP_SCRIPT
+  ? SHONENJUMPPLUS_INJECTED_SCRIPT + androidTransformZoomScript()
   : SHONENJUMPPLUS_INJECTED_SCRIPT;
 const EN_INJECTED_SCRIPT = Platform.OS === 'android'
-  ? MANGAPLUS_INJECTED_SCRIPT + ANDROID_CUSTOM_ZOOM_SETUP_SCRIPT
+  ? MANGAPLUS_INJECTED_SCRIPT + androidImageWidthZoomScript('.zao-image')
   : MANGAPLUS_INJECTED_SCRIPT;
 
 const DRAWER_WIDTH = 260;
