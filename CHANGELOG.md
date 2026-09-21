@@ -3,6 +3,22 @@
 All notable changes to this project are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.0] - 2026-09-21
+
+### Added
+- Zoom e pan custom (solo Android) per entrambi i pannelli, per aggirare i bug nativi di `react-native-webview` (zoomScale illeggibile, pan rotto dopo un pinch) individuati in 0.1.0 — risolve la limitazione nota segnalata sotto la 0.1.0.
+  - JP (Shonen Jump+): trasformazione CSS uniforme su tutta la pagina, con pan quando zoomato.
+  - EN (MangaPlus): ridimensionamento diretto della larghezza delle singole immagini pagina (mantenendo le proporzioni), lasciando lo scroll verticale nativo del sito completamente intatto — un approccio diverso da JP perché il tentativo iniziale (stessa trasformazione CSS condivisa) lasciava bordi vuoti sopra/sotto invece di rivelare più contenuto.
+- Feedback visivo (tocco che scurisce il pulsante) su tutti i pulsanti del drawer.
+
+### Fixed
+- I pulsanti "Vai al login" non navigavano quando l'URL di destinazione coincideva con l'ultimo valore noto della prop `source` della WebView (mai aggiornata durante la navigazione libera dentro il sito) — react-native-webview non rilevava alcun cambiamento e non ricaricava.
+- Il mirroring delle pagine da JP verso EN si allineava solo una volta ogni 2-3 cambi pagina invece che ad ogni cambio, per due problemi distinti nella gestione dello stato React: un effetto collaterale (invio del comando di navigazione) eseguito dentro la funzione di aggiornamento dello stato invece che in un `useEffect` dopo il commit, e riferimenti a `onMessage`/`onLoadEnd` che cambiavano identità ad ogni render.
+- Lo zoom-out non poteva scendere sotto il livello di apertura della pagina, per un bug nella formula di clamp (valori di scala sotto 1 producevano un intervallo di offset degenere).
+
+### Known limitations
+- La configurazione EAS per un development build resta nel progetto (`eas.json`) ma l'indagine sul debug remoto via `chrome://inspect` non è stata conclusa (Expo Go non espone le WebView; servirebbe completare il test col development build già creato).
+
 ## [0.1.0] - 2026-09-20
 
 ### Added
