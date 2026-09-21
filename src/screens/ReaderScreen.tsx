@@ -89,7 +89,29 @@ export default function ReaderScreen() {
     ref.current?.postMessage(JSON.stringify(command));
   }, []);
 
-  const handleMessage = useCallback((side: Side) => (event: WebViewMessageEvent) => {
+  // sendNavigate is a real side effect (posts a message into a WebView).
+  // Reading a ref immediately after calling setMirrorState assumed the
+  // updater had already run by then — not guaranteed under React's
+  // automatic batching, so the ref could still hold a stale (or not-yet-set)
+  // value depending on scheduling. The sound version: the updater only
+  // computes and stores the pending action in real state; a useEffect fires
+  // the side effect once React has actually committed it.
+  interface PendingNavigateAction { sendNavigateTo: Side; targetPage: number; }
+  const [pendingNavigate, setPendingNavigate] = useState<PendingNavigateAction | null>(null);
+
+  useEffect(() => {
+    if (!pendingNavigate) return;
+    sendNavigate(pendingNavigate.sendNavigateTo, pendingNavigate.targetPage);
+  }, [pendingNavigate, sendNavigate]);
+
+  // Curried factories like `handleMessage(side)` produce a brand-new
+  // function every render, so the WebView's onMessage prop identity churns
+  // on every render even though the outer function is memoized. If
+  // react-native-webview re-subscribes its native message listener whenever
+  // that prop reference changes, an event landing during that window could
+  // be dropped — plausible contributor to page-updates going missing. Kept
+  // stable instead: one memoized handler plus two thin per-side wrappers.
+  const handlePageUpdate = useCallback((side: Side, event: WebViewMessageEvent) => {
     let msg: PageUpdateMessage;
     try {
       msg = JSON.parse(event.nativeEvent.data);
@@ -106,13 +128,22 @@ export default function ReaderScreen() {
         type: 'PAGE_CHANGED', side, page: msg.page, now: Date.now(),
       });
       if (action.sendNavigateTo && action.targetPage !== undefined) {
-        sendNavigate(action.sendNavigateTo, action.targetPage);
+        setPendingNavigate({ sendNavigateTo: action.sendNavigateTo, targetPage: action.targetPage });
       }
       return state;
     });
-  }, [sendNavigate]);
+  }, []);
 
-  const handleLoadEnd = useCallback((side: Side) => () => {
+  const handleJpMessage = useCallback(
+    (event: WebViewMessageEvent) => handlePageUpdate('jp', event),
+    [handlePageUpdate]
+  );
+  const handleEnMessage = useCallback(
+    (event: WebViewMessageEvent) => handlePageUpdate('en', event),
+    [handlePageUpdate]
+  );
+
+  const handleLoadEndForSide = useCallback((side: Side) => {
     const page = pendingRestorePage.current[side];
     if (page === null) return;
     pendingRestorePage.current[side] = null;
@@ -121,6 +152,9 @@ export default function ReaderScreen() {
     // works; revisit if restores prove flaky on slower devices.
     setTimeout(() => sendNavigate(side, page), 300);
   }, [sendNavigate]);
+
+  const handleJpLoadEnd = useCallback(() => handleLoadEndForSide('jp'), [handleLoadEndForSide]);
+  const handleEnLoadEnd = useCallback(() => handleLoadEndForSide('en'), [handleLoadEndForSide]);
 
   useEffect(() => {
     if (!mirrorState.pendingMirror) return;
@@ -134,11 +168,11 @@ export default function ReaderScreen() {
     setMirrorState((prev) => {
       const { state, action } = reduceMirrorState(prev, { type: 'SET_DELTA', delta: prev.pageDelta + step });
       if (action.sendNavigateTo && action.targetPage !== undefined) {
-        sendNavigate(action.sendNavigateTo, action.targetPage);
+        setPendingNavigate({ sendNavigateTo: action.sendNavigateTo, targetPage: action.targetPage });
       }
       return state;
     });
-  }, [sendNavigate]);
+  }, []);
 
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
 
@@ -200,16 +234,16 @@ export default function ReaderScreen() {
           style={styles.pane}
           source={jpSource}
           injectedJavaScript={JP_INJECTED_SCRIPT}
-          onMessage={handleMessage('jp')}
-          onLoadEnd={handleLoadEnd('jp')}
+          onMessage={handleJpMessage}
+          onLoadEnd={handleJpLoadEnd}
         />
         <WebView
           ref={enWebViewRef}
           style={styles.pane}
           source={enSource}
           injectedJavaScript={EN_INJECTED_SCRIPT}
-          onMessage={handleMessage('en')}
-          onLoadEnd={handleLoadEnd('en')}
+          onMessage={handleEnMessage}
+          onLoadEnd={handleEnLoadEnd}
         />
       </View>
 
