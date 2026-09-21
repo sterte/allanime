@@ -67,8 +67,13 @@ export default function ReaderScreen() {
   const enCurrent = useRef({ url: EN_HOME, title: '' });
 
   const navigateTo = useCallback((side: Side, url: string) => {
-    if (side === 'jp') setJpSource({ uri: url });
-    else setEnSource({ uri: url });
+    // A cache-busting query param forces the `source` prop to change even
+    // when navigating back to a URL that's already the last-set value —
+    // otherwise react-native-webview sees no diff and does nothing, since
+    // jpSource/enSource never track link clicks made inside the WebView.
+    const target = { uri: url + (url.includes('?') ? '&' : '?') + '_t=' + Date.now() };
+    if (side === 'jp') setJpSource(target);
+    else setEnSource(target);
   }, []);
 
   const goToLogin = (side: 'jp' | 'en') => {
@@ -229,7 +234,7 @@ export default function ReaderScreen() {
           <View style={styles.drawerRow}>
             <Text style={styles.drawerRowLabel}>Orientamento</Text>
             <Pressable
-              style={styles.smallButton}
+              style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
               onPress={() => setSplitDirection((d) => (d === 'row' ? 'column' : 'row'))}
             >
               <Text style={styles.smallButtonText}>
@@ -240,11 +245,17 @@ export default function ReaderScreen() {
           <View style={styles.drawerRow}>
             <Text style={styles.drawerRowLabel}>Scarto pagine (JP = EN {mirrorState.pageDelta >= 0 ? '+' : ''}{mirrorState.pageDelta})</Text>
             <View style={styles.stepper}>
-              <Pressable style={styles.smallButton} onPress={() => changeDelta(-1)}>
+              <Pressable
+                style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
+                onPress={() => changeDelta(-1)}
+              >
                 <Text style={styles.smallButtonText}>-</Text>
               </Pressable>
               <Text style={styles.stepperValue}>{mirrorState.pageDelta}</Text>
-              <Pressable style={styles.smallButton} onPress={() => changeDelta(1)}>
+              <Pressable
+                style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
+                onPress={() => changeDelta(1)}
+              >
                 <Text style={styles.smallButtonText}>+</Text>
               </Pressable>
             </View>
@@ -253,20 +264,29 @@ export default function ReaderScreen() {
           <Text style={styles.drawerSectionTitle}>Account</Text>
           <View style={styles.drawerRow}>
             <Text style={styles.drawerRowLabel}>Shonen Jump+ (JP)</Text>
-            <Pressable style={styles.smallButton} onPress={() => goToLogin('jp')}>
+            <Pressable
+              style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
+              onPress={() => goToLogin('jp')}
+            >
               <Text style={styles.smallButtonText}>Vai al login</Text>
             </Pressable>
           </View>
           <View style={styles.drawerRow}>
             <Text style={styles.drawerRowLabel}>MangaPlus (EN)</Text>
-            <Pressable style={styles.smallButton} onPress={() => goToLogin('en')}>
+            <Pressable
+              style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
+              onPress={() => goToLogin('en')}
+            >
               <Text style={styles.smallButtonText}>Vai al login</Text>
             </Pressable>
           </View>
 
           <View style={styles.bookmarkHeader}>
             <Text style={styles.drawerSectionTitle}>Bookmark</Text>
-            <Pressable style={styles.smallButton} onPress={addBookmark}>
+            <Pressable
+              style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
+              onPress={addBookmark}
+            >
               <Text style={styles.smallButtonText}>+ Aggiungi</Text>
             </Pressable>
           </View>
@@ -276,7 +296,7 @@ export default function ReaderScreen() {
           {bookmarks.map((bookmark, index) => (
             <Pressable
               key={bookmark.id}
-              style={styles.bookmarkRow}
+              style={({ pressed }) => [styles.bookmarkRow, pressed && styles.bookmarkRowPressed]}
               onPress={() => restoreBookmark(bookmark)}
               onLongPress={() => confirmDeleteBookmark(bookmark)}
             >
@@ -327,6 +347,7 @@ const styles = StyleSheet.create({
   smallButton: {
     backgroundColor: '#444', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 4,
   },
+  smallButtonPressed: { backgroundColor: '#666' },
   smallButtonText: { color: 'white', fontSize: 12 },
   stepper: { flexDirection: 'row', alignItems: 'center' },
   stepperValue: { color: 'white', fontSize: 14, marginHorizontal: 10, minWidth: 20, textAlign: 'center' },
@@ -338,6 +359,7 @@ const styles = StyleSheet.create({
   bookmarkRow: {
     backgroundColor: '#2a2a2a', borderRadius: 4, padding: 8, marginTop: 8,
   },
+  bookmarkRowPressed: { backgroundColor: '#3a3a3a' },
   bookmarkTitle: { color: 'white', fontSize: 13 },
   bookmarkSubtitle: { color: '#999', fontSize: 11, marginTop: 2 },
 });
