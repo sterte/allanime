@@ -1,12 +1,20 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, Pressable, Text, Animated, PanResponder, ScrollView, Alert } from 'react-native';
+import { View, StyleSheet, Pressable, Text, Animated, PanResponder, ScrollView, Alert, Platform } from 'react-native';
 import WebView, { WebViewMessageEvent } from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MANGAPLUS_INJECTED_SCRIPT } from '../webview/injectedScripts/mangaplus';
 import { SHONENJUMPPLUS_INJECTED_SCRIPT } from '../webview/injectedScripts/shonenjumpplus';
+import { ANDROID_CUSTOM_ZOOM_SETUP_SCRIPT } from '../webview/injectedScripts/androidPinchZoom';
 import { PageUpdateMessage, NavigateCommand, Side } from '../webview/messages';
 import { reduceMirrorState, initialMirrorState, MirrorState } from '../sync/mirrorState';
 import { Bookmark, loadBookmarks, saveBookmarks } from '../storage/bookmarks';
+
+const JP_INJECTED_SCRIPT = Platform.OS === 'android'
+  ? SHONENJUMPPLUS_INJECTED_SCRIPT + ANDROID_CUSTOM_ZOOM_SETUP_SCRIPT
+  : SHONENJUMPPLUS_INJECTED_SCRIPT;
+const EN_INJECTED_SCRIPT = Platform.OS === 'android'
+  ? MANGAPLUS_INJECTED_SCRIPT + ANDROID_CUSTOM_ZOOM_SETUP_SCRIPT
+  : MANGAPLUS_INJECTED_SCRIPT;
 
 const DRAWER_WIDTH = 260;
 const EDGE_ZONE_WIDTH = 24;
@@ -60,8 +68,13 @@ export default function ReaderScreen() {
   const enCurrent = useRef({ url: EN_HOME, title: '' });
 
   const navigateTo = useCallback((side: Side, url: string) => {
-    if (side === 'jp') setJpSource({ uri: url });
-    else setEnSource({ uri: url });
+    // A cache-busting query param forces the `source` prop to change even
+    // when navigating back to a URL that's already the last-set value —
+    // otherwise react-native-webview sees no diff and does nothing, since
+    // jpSource/enSource never track link clicks made inside the WebView.
+    const target = { uri: url + (url.includes('?') ? '&' : '?') + '_t=' + Date.now() };
+    if (side === 'jp') setJpSource(target);
+    else setEnSource(target);
   }, []);
 
   const goToLogin = (side: 'jp' | 'en') => {
@@ -76,7 +89,29 @@ export default function ReaderScreen() {
     ref.current?.postMessage(JSON.stringify(command));
   }, []);
 
-  const handleMessage = useCallback((side: Side) => (event: WebViewMessageEvent) => {
+  // sendNavigate is a real side effect (posts a message into a WebView).
+  // Reading a ref immediately after calling setMirrorState assumed the
+  // updater had already run by then — not guaranteed under React's
+  // automatic batching, so the ref could still hold a stale (or not-yet-set)
+  // value depending on scheduling. The sound version: the updater only
+  // computes and stores the pending action in real state; a useEffect fires
+  // the side effect once React has actually committed it.
+  interface PendingNavigateAction { sendNavigateTo: Side; targetPage: number; }
+  const [pendingNavigate, setPendingNavigate] = useState<PendingNavigateAction | null>(null);
+
+  useEffect(() => {
+    if (!pendingNavigate) return;
+    sendNavigate(pendingNavigate.sendNavigateTo, pendingNavigate.targetPage);
+  }, [pendingNavigate, sendNavigate]);
+
+  // Curried factories like `handleMessage(side)` produce a brand-new
+  // function every render, so the WebView's onMessage prop identity churns
+  // on every render even though the outer function is memoized. If
+  // react-native-webview re-subscribes its native message listener whenever
+  // that prop reference changes, an event landing during that window could
+  // be dropped — plausible contributor to page-updates going missing. Kept
+  // stable instead: one memoized handler plus two thin per-side wrappers.
+  const handlePageUpdate = useCallback((side: Side, event: WebViewMessageEvent) => {
     let msg: PageUpdateMessage;
     try {
       msg = JSON.parse(event.nativeEvent.data);
@@ -93,13 +128,22 @@ export default function ReaderScreen() {
         type: 'PAGE_CHANGED', side, page: msg.page, now: Date.now(),
       });
       if (action.sendNavigateTo && action.targetPage !== undefined) {
-        sendNavigate(action.sendNavigateTo, action.targetPage);
+        setPendingNavigate({ sendNavigateTo: action.sendNavigateTo, targetPage: action.targetPage });
       }
       return state;
     });
-  }, [sendNavigate]);
+  }, []);
 
-  const handleLoadEnd = useCallback((side: Side) => () => {
+  const handleJpMessage = useCallback(
+    (event: WebViewMessageEvent) => handlePageUpdate('jp', event),
+    [handlePageUpdate]
+  );
+  const handleEnMessage = useCallback(
+    (event: WebViewMessageEvent) => handlePageUpdate('en', event),
+    [handlePageUpdate]
+  );
+
+  const handleLoadEndForSide = useCallback((side: Side) => {
     const page = pendingRestorePage.current[side];
     if (page === null) return;
     pendingRestorePage.current[side] = null;
@@ -108,6 +152,9 @@ export default function ReaderScreen() {
     // works; revisit if restores prove flaky on slower devices.
     setTimeout(() => sendNavigate(side, page), 300);
   }, [sendNavigate]);
+
+  const handleJpLoadEnd = useCallback(() => handleLoadEndForSide('jp'), [handleLoadEndForSide]);
+  const handleEnLoadEnd = useCallback(() => handleLoadEndForSide('en'), [handleLoadEndForSide]);
 
   useEffect(() => {
     if (!mirrorState.pendingMirror) return;
@@ -121,11 +168,11 @@ export default function ReaderScreen() {
     setMirrorState((prev) => {
       const { state, action } = reduceMirrorState(prev, { type: 'SET_DELTA', delta: prev.pageDelta + step });
       if (action.sendNavigateTo && action.targetPage !== undefined) {
-        sendNavigate(action.sendNavigateTo, action.targetPage);
+        setPendingNavigate({ sendNavigateTo: action.sendNavigateTo, targetPage: action.targetPage });
       }
       return state;
     });
-  }, [sendNavigate]);
+  }, []);
 
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
 
@@ -186,17 +233,17 @@ export default function ReaderScreen() {
           ref={jpWebViewRef}
           style={styles.pane}
           source={jpSource}
-          injectedJavaScript={SHONENJUMPPLUS_INJECTED_SCRIPT}
-          onMessage={handleMessage('jp')}
-          onLoadEnd={handleLoadEnd('jp')}
+          injectedJavaScript={JP_INJECTED_SCRIPT}
+          onMessage={handleJpMessage}
+          onLoadEnd={handleJpLoadEnd}
         />
         <WebView
           ref={enWebViewRef}
           style={styles.pane}
           source={enSource}
-          injectedJavaScript={MANGAPLUS_INJECTED_SCRIPT}
-          onMessage={handleMessage('en')}
-          onLoadEnd={handleLoadEnd('en')}
+          injectedJavaScript={EN_INJECTED_SCRIPT}
+          onMessage={handleEnMessage}
+          onLoadEnd={handleEnLoadEnd}
         />
       </View>
 
@@ -222,7 +269,7 @@ export default function ReaderScreen() {
           <View style={styles.drawerRow}>
             <Text style={styles.drawerRowLabel}>Orientamento</Text>
             <Pressable
-              style={styles.smallButton}
+              style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
               onPress={() => setSplitDirection((d) => (d === 'row' ? 'column' : 'row'))}
             >
               <Text style={styles.smallButtonText}>
@@ -233,11 +280,17 @@ export default function ReaderScreen() {
           <View style={styles.drawerRow}>
             <Text style={styles.drawerRowLabel}>Scarto pagine (JP = EN {mirrorState.pageDelta >= 0 ? '+' : ''}{mirrorState.pageDelta})</Text>
             <View style={styles.stepper}>
-              <Pressable style={styles.smallButton} onPress={() => changeDelta(-1)}>
+              <Pressable
+                style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
+                onPress={() => changeDelta(-1)}
+              >
                 <Text style={styles.smallButtonText}>-</Text>
               </Pressable>
               <Text style={styles.stepperValue}>{mirrorState.pageDelta}</Text>
-              <Pressable style={styles.smallButton} onPress={() => changeDelta(1)}>
+              <Pressable
+                style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
+                onPress={() => changeDelta(1)}
+              >
                 <Text style={styles.smallButtonText}>+</Text>
               </Pressable>
             </View>
@@ -246,20 +299,29 @@ export default function ReaderScreen() {
           <Text style={styles.drawerSectionTitle}>Account</Text>
           <View style={styles.drawerRow}>
             <Text style={styles.drawerRowLabel}>Shonen Jump+ (JP)</Text>
-            <Pressable style={styles.smallButton} onPress={() => goToLogin('jp')}>
+            <Pressable
+              style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
+              onPress={() => goToLogin('jp')}
+            >
               <Text style={styles.smallButtonText}>Vai al login</Text>
             </Pressable>
           </View>
           <View style={styles.drawerRow}>
             <Text style={styles.drawerRowLabel}>MangaPlus (EN)</Text>
-            <Pressable style={styles.smallButton} onPress={() => goToLogin('en')}>
+            <Pressable
+              style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
+              onPress={() => goToLogin('en')}
+            >
               <Text style={styles.smallButtonText}>Vai al login</Text>
             </Pressable>
           </View>
 
           <View style={styles.bookmarkHeader}>
             <Text style={styles.drawerSectionTitle}>Bookmark</Text>
-            <Pressable style={styles.smallButton} onPress={addBookmark}>
+            <Pressable
+              style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
+              onPress={addBookmark}
+            >
               <Text style={styles.smallButtonText}>+ Aggiungi</Text>
             </Pressable>
           </View>
@@ -269,7 +331,7 @@ export default function ReaderScreen() {
           {bookmarks.map((bookmark, index) => (
             <Pressable
               key={bookmark.id}
-              style={styles.bookmarkRow}
+              style={({ pressed }) => [styles.bookmarkRow, pressed && styles.bookmarkRowPressed]}
               onPress={() => restoreBookmark(bookmark)}
               onLongPress={() => confirmDeleteBookmark(bookmark)}
             >
@@ -320,6 +382,7 @@ const styles = StyleSheet.create({
   smallButton: {
     backgroundColor: '#444', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 4,
   },
+  smallButtonPressed: { backgroundColor: '#666' },
   smallButtonText: { color: 'white', fontSize: 12 },
   stepper: { flexDirection: 'row', alignItems: 'center' },
   stepperValue: { color: 'white', fontSize: 14, marginHorizontal: 10, minWidth: 20, textAlign: 'center' },
@@ -331,6 +394,7 @@ const styles = StyleSheet.create({
   bookmarkRow: {
     backgroundColor: '#2a2a2a', borderRadius: 4, padding: 8, marginTop: 8,
   },
+  bookmarkRowPressed: { backgroundColor: '#3a3a3a' },
   bookmarkTitle: { color: 'white', fontSize: 13 },
   bookmarkSubtitle: { color: '#999', fontSize: 11, marginTop: 2 },
 });
